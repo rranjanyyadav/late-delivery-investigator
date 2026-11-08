@@ -25,7 +25,12 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # 384 dims, ~90 MB, fast on CPU
 COLLECTION = "policies"
-TOP_K = 4
+# Retrieval finds the best sections, then the LLM reads the WHOLE policies they
+# belong to (see expand_to_documents). In testing, compound questions ("targets
+# AND escalation steps") ranked generic sections such as Purpose highly and
+# pushed POL-01 §Targets to 6th-7th place, out of a section-only context.
+TOP_K = 6
+MAX_DOCS = 3  # policies are ~400 words, so at most ~1,200 words of context
 # Cosine distance = 1 - cosine similarity. Chunks further away than this are
 # treated as "not relevant", so an off-topic question retrieves nothing.
 MAX_DISTANCE = 0.75
@@ -36,7 +41,9 @@ ANSWER_PROMPT = f"""You answer questions about the company's operations policies
 - Use ONLY the policy excerpts given. No outside knowledge, no assumptions.
 - Cite every rule you use like [POL-01 §Targets], using the ids and section names given.
 - Quote thresholds, deadlines and owners exactly as written.
-- If the excerpts do not answer the question, reply exactly: "{NOT_COVERED}"
+- If the excerpts answer only PART of the question, answer that part and say which
+  part the excerpts do not cover.
+- Only if the excerpts answer none of it, reply exactly: "{NOT_COVERED}"
 - 2-5 sentences."""
 
 
@@ -155,6 +162,22 @@ def retrieve(question: str, k: int = TOP_K) -> list[Chunk]:
     return chunks
 
 
+def expand_to_documents(hits: list[Chunk], max_docs: int = MAX_DOCS) -> list[Chunk]:
+    """Parent-document retrieval: chunks are for FINDING, documents are for
+    ANSWERING. Take the policies of the best-matching chunks (up to max_docs,
+    best first) and return every section of them, in document order. A
+    compound question then still sees e.g. §Targets even if that section
+    ranked 7th on its own. Each chunk keeps its distance if it was a hit."""
+    doc_ids = list(dict.fromkeys(c.doc_id for c in hits))[:max_docs]
+    distances = {c.id: c.distance for c in hits}
+    res = _collection().get(where={"doc_id": {"$in": doc_ids}},
+                            include=["documents", "metadatas"])
+    chunks = [Chunk(cid, m["doc_id"], m["title"], m["section"], doc, distances.get(cid))
+              for cid, doc, m in zip(res["ids"], res["documents"], res["metadatas"])]
+    # Group by document (best-matching first), sections in their original order.
+    return sorted(chunks, key=lambda c: (doc_ids.index(c.doc_id), int(c.id.rsplit("-", 1)[1])))
+
+
 def policy_titles() -> list[str]:
     """'POL-01 Delivery SLA and On-Time Targets', ... (used by the router prompt)."""
     metas = _collection().get(include=["metadatas"])["metadatas"]
@@ -163,18 +186,20 @@ def policy_titles() -> list[str]:
 
 # ----------------------------------------------------------------- answer
 def answer(question: str, llm: LLM | None = None) -> RagResult:
-    result = RagResult(question=question, chunks=retrieve(question))
-    if not result.chunks:
+    hits = retrieve(question)
+    result = RagResult(question=question)
+    if not hits:
         # Nothing relevant retrieved: refuse WITHOUT calling the LLM, so it has
         # no chance to answer from its own general knowledge.
         result.status, result.answer = "not_covered", NOT_COVERED
         return result
+    result.chunks = expand_to_documents(hits)
     context = "\n\n".join(f"{c.citation}\n{c.text}" for c in result.chunks)
     result.answer = (llm or LLM()).chat([
         {"role": "system", "content": ANSWER_PROMPT},
         {"role": "user", "content": f"Policy excerpts:\n{context}\n\nQuestion: {question}"},
     ])
-    if NOT_COVERED in result.answer:
+    if result.answer.strip().strip('"') == NOT_COVERED:  # whole answer, not a partial one
         result.status = "not_covered"
     return result
 
@@ -187,7 +212,8 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 3 and sys.argv[1] == "ask":
         r = answer(" ".join(sys.argv[2:]))
         for c in r.chunks:
-            print(f"  {c.distance:.3f}  {c.citation}")
+            hit = f"{c.distance:.3f}" if c.distance is not None else "  -  "
+            print(f"  {hit}  {c.citation}")
         print(f"\n{r.answer}")
     else:
         sys.exit('Usage: python -m ldi.rag build | python -m ldi.rag ask "question"')

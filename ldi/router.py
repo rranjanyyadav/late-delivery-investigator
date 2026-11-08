@@ -33,8 +33,8 @@ policies can have period-over-period rules. Example:
   policy_question: "What are the on-time delivery targets and when is an SLA breach recorded?"
 
 Return JSON: {{"route": "data|policy|both",
-  "data_question": "<self-contained question for the database, or empty>",
-  "policy_question": "<self-contained question for the policies, or empty>"}}"""
+  "data_question": "<only for both: the data part, else empty>",
+  "policy_question": "<only for both: the policy part, else empty>"}}"""
 
 COMBINE_PROMPT = """Write one answer for an operations manager from two inputs: an answer
 from the order data and an answer from the policy documents.
@@ -79,11 +79,15 @@ class Assistant:
     def ask(self, question: str) -> AssistantResult:
         plan = self.route(question)
         route = plan["route"]
+        # Single-route questions go through WORD FOR WORD: rewriting them adds
+        # nothing and can lose intent (in testing, the router turned "Why did
+        # on-time drop...?" into "What was the on-time rate...?", which skipped
+        # the drill-down). Only mixed questions are split into two parts.
         if route == "data":
-            data = self.agent.ask(plan["data_question"])
+            data = self.agent.ask(question)
             return AssistantResult(question, route, data.answer, data=data)
         if route == "policy":
-            policy = rag.answer(plan["policy_question"], self.llm)
+            policy = rag.answer(question, self.llm)
             return AssistantResult(question, route, policy.answer, policy=policy)
 
         data = self.agent.ask(plan["data_question"])
