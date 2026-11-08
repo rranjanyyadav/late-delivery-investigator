@@ -30,6 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # so `import ldi` works when run as a script
 
+import openai  # noqa: E402
 import pandas as pd  # noqa: E402
 import yaml  # noqa: E402
 
@@ -39,6 +40,7 @@ QUESTIONS = ROOT / "eval" / "questions.yaml"
 RESULTS_DIR = ROOT / "eval" / "results"
 CATEGORIES = ["wrong metric", "wrong join/filter", "misread question",
               "hallucinated column", "execution error"]
+API_ERROR = "api error"  # not an agent error; counted separately
 HALLUCINATION_MARKERS = ["Binder Error", "not found", "does not exist",
                          "Unknown metric", "Unknown dimension", "Referenced column"]
 
@@ -140,7 +142,11 @@ def run(label: str, only: list[str] | None = None) -> dict:
         try:
             r = agent.ask(q["question"], explain=False)
             correct, category = grade(q, r, agent.con)
-        except Exception as e:  # an API failure should not stop the whole run
+        except openai.APIError as e:
+            # Rate limit / network: the model never saw the question, so this is
+            # not an agent error. Reported separately, never silently dropped.
+            r, correct, category = AgentResult(q["question"], errors=[repr(e)]), False, API_ERROR
+        except Exception as e:  # any other crash is the agent's fault
             r, correct, category = AgentResult(q["question"], errors=[repr(e)]), False, "execution error"
         rows.append({
             "id": q["id"], "correct": correct, "category": category,
@@ -154,11 +160,15 @@ def run(label: str, only: list[str] | None = None) -> dict:
         print(f"[{i:>2}/{len(questions)}] {q['id']:<36} {mark}", flush=True)
 
     n_correct = sum(r["correct"] for r in rows)
+    n_api = sum(r["category"] == API_ERROR for r in rows)
+    graded = len(rows) - n_api
     report = {
         "label": label, "timestamp": datetime.now().isoformat(timespec="seconds"),
         "model": f"{agent.llm.provider}/{agent.llm.model}",
         "total": len(rows), "correct": n_correct,
         "accuracy": round(n_correct / len(rows), 4) if rows else 0,
+        "api_errors": n_api,
+        "accuracy_excluding_api_errors": round(n_correct / graded, 4) if graded else 0,
         "errors": {c: sum(r["category"] == c for r in rows) for c in CATEGORIES},
         "recovered_by_retry": sum(r["recovered_by_retry"] for r in rows),
         "questions": rows,
@@ -168,6 +178,9 @@ def run(label: str, only: list[str] | None = None) -> dict:
     path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
 
     print(f"\n{label}: {n_correct}/{len(rows)} correct = {report['accuracy']:.0%}  ({report['model']})")
+    if n_api:
+        print(f"API errors (rate limit/network, not graded): {n_api} -> "
+              f"{n_correct}/{graded} = {report['accuracy_excluding_api_errors']:.0%} of graded questions")
     print("Errors: " + ", ".join(f"{c}: {n}" for c, n in report["errors"].items()))
     print(f"Answered correctly only thanks to the retry: {report['recovered_by_retry']}")
     print(f"Saved {path.relative_to(ROOT)}")

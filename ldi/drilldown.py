@@ -53,9 +53,19 @@ class Drilldown:
         return self.compare_value - self.base_value
 
 
+# A rate close to 100% must be decomposed through its complement. Almost every
+# order is on time, so a segment's on-time contribution k1/N1 - k0/N0 is roughly
+# its change in volume SHARE (w1 - w0): in testing, bed_bath_table "explained"
+# -1.09 pp of the SP drop, -1.01 pp of it pure mix, while its own on-time rate
+# barely moved. The late rate counts the rare event, so its contributions
+# point at segments that actually got worse. The two changes are exact mirrors.
+DECOMPOSE_AS = {"on_time_delivery_rate": "late_delivery_rate"}
+
+
 def decompose(con: duckdb.DuckDBPyConnection, layer: SemanticLayer, metric: str,
               dimension: str, period_field: str, base: str, compare: str,
               filters=()) -> Drilldown:
+    metric = DECOMPOSE_AS.get(metric, metric)
     m = layer.get_metric(metric)
     if not m.decomposable:
         options = [x.name for x in layer.metrics.values() if x.decomposable]
