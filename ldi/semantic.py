@@ -46,6 +46,13 @@ class Metric:
     expression: str
     format: str
     dimensions: list[str]
+    # Only ratio/average metrics have these; they make the metric decomposable.
+    numerator: str | None = None
+    denominator: str | None = None
+
+    @property
+    def decomposable(self) -> bool:
+        return bool(self.numerator and self.denominator)
 
 
 @dataclass
@@ -129,6 +136,25 @@ class SemanticLayer:
         sql += f"\nLIMIT {max(1, min(int(limit), MAX_LIMIT))}"
         return Query(sql, params)
 
+    def filters_sql(self, filters, metric_names) -> tuple[list[str], list]:
+        """Compile filters into WHERE clauses + parameters (used by the drill-down)."""
+        chosen = [self._get_metric(n) for n in metric_names]
+        allowed = set.intersection(*(set(m.dimensions) for m in chosen))
+        clauses, params = [], []
+        for f in filters:
+            clause, values = self._compile_filter(f, allowed, metric_names)
+            clauses.append(clause)
+            params.extend(values)
+        return clauses, params
+
+    def check_dimension(self, name: str, metric_name: str) -> str:
+        """Raise SemanticError if the metric cannot use this dimension; return its column."""
+        self._check_dimension(name, set(self._get_metric(metric_name).dimensions), [metric_name])
+        return self.dimensions[name].column
+
+    def get_metric(self, name: str) -> Metric:
+        return self._get_metric(name)
+
     def _get_metric(self, name: str) -> Metric:
         if name not in self.metrics:
             raise SemanticError(
@@ -177,8 +203,9 @@ class SemanticLayer:
         lines.append("\nMETRICS:")
         for m in self.metrics.values():
             desc = " ".join(m.description.split())
+            tag = ", decomposable" if m.decomposable else ""
             lines.append(
-                f"- {m.name} [{m.format}, view={m.source}, grain={m.grain}]: {desc} "
+                f"- {m.name} [{m.format}, view={m.source}, grain={m.grain}{tag}]: {desc} "
                 f"Dimensions: {', '.join(m.dimensions)}."
             )
         return "\n".join(lines)

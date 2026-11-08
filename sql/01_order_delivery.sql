@@ -66,6 +66,11 @@ SELECT
         date_diff('day', CAST(t.purchase_ts AS DATE), CAST(t.delivered_date AS DATE))
     END                                                   AS days_to_deliver,
 
+    -- How many days the customer was promised at purchase. If this shrinks,
+    -- the late rate can rise even when deliveries get faster.
+    date_diff('day', CAST(t.purchase_ts AS DATE),
+                     CAST(t.estimated_delivery_date AS DATE)) AS promised_days,
+
     -- Revenue = what the customer paid for the items, including freight.
     -- NULL for the ~775 orders that have no items (mostly canceled/unavailable).
     ot.item_count,

@@ -2,9 +2,10 @@
 
     question --LLM--> JSON plan --> SQL --> DuckDB (read-only) --> result --LLM--> answer
 
-The plan is one of three kinds:
+The plan is one of four kinds:
   metric         - use the semantic layer (preferred; definitions are fixed)
   sql            - a raw SELECT, only when no metric fits; checked by sql_guard
+  drilldown      - "why did X change?": ranks contributors (ldi/drilldown.py)
   cannot_answer  - the data does not contain what the question needs
 
 If compiling or running the plan fails, the error message is sent back to the
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 import duckdb
 import pandas as pd
 
+from ldi.drilldown import Drilldown, decompose, display_table, lead_time_drivers
 from ldi.llm import LLM, parse_json
 from ldi.semantic import SemanticError, SemanticLayer
 from ldi.sql_guard import UnsafeSQLError, connect_readonly, run_query, validate_sql
@@ -56,7 +58,14 @@ REPLY WITH EXACTLY ONE JSON OBJECT, one of:
      "min_orders": null, "limit": 100}}
 2. Only if no metric fits, one DuckDB SELECT over the views/tables above:
    {{"interpretation": "...", "type": "sql", "sql": "SELECT ..."}}
-3. If the data cannot answer the question:
+3. For WHY questions about a change between two periods ("why did on-time delivery
+   drop in SP in Q3 2018?"), a root-cause drill-down on a decomposable metric:
+   {{"interpretation": "...", "type": "drilldown", "metric": "<decomposable metric>",
+     "period_field": "quarter|month", "base": "<earlier period>", "compare": "<later period>",
+     "dimensions": ["category", "seller_state", "seller"], "filters": [...]}}
+   For on-time/late questions use late_delivery_rate. If only one period is named,
+   compare it with the period just before it (2018-Q3 -> base 2018-Q2).
+4. If the data cannot answer the question:
    {{"interpretation": "...", "type": "cannot_answer", "reason": "<what is missing>"}}
 
 RULES
@@ -78,7 +87,22 @@ EXPLAIN_PROMPT = """You explain query results to an operations manager in plain 
 - Rates are fractions: 0.934 means 93.4%. Round sensibly.
 - 2-4 sentences, direct answer first.
 - If the table is empty, say that no matching data was found.
-- If the result was truncated, say that only the first rows are shown."""
+- If the result was truncated, say that only the first rows are shown.
+For a drill-down (why did a metric change):
+- All units are already converted: *_pct columns are percentages, *_pp columns are
+  percentage points. Quote them as they are; do not rescale them.
+- contribution_pp = how many points of the overall change one segment explains.
+  rate_effect = the segment itself got better/worse; mix_effect = its share of
+  volume changed.
+- Compare share_of_change_pct with volume_share_pct. A segment that explains about
+  as much of the change as its share of volume is part of a BROAD change, not a
+  cause on its own. Only call a change concentrated if a few segments explain much
+  more of it than their volume share.
+- Name the 2-3 biggest contributors.
+- If a lead-time table is given, say whether actual delivery got slower or the
+  promised delivery window got shorter.
+- Say "contributed to", not "caused": the data shows where the change happened,
+  not why it happened."""
 
 
 @dataclass
@@ -93,6 +117,8 @@ class AgentResult:
     truncated: bool = False
     attempts: int = 0
     errors: list[str] = field(default_factory=list)
+    drilldowns: list[Drilldown] = field(default_factory=list)  # "why" questions only
+    lead_times: pd.DataFrame | None = None                     # "why" questions only
 
 
 class Agent:
@@ -139,8 +165,11 @@ class Agent:
                     result.status = "cannot_answer"
                     result.answer = f"{CANNOT_ANSWER}: {plan.get('reason', 'the data does not cover it')}"
                     return result
-                result.sql, result.params = self._plan_to_sql(plan)
-                result.data, result.truncated = run_query(self.con, result.sql, result.params)
+                if plan.get("type") == "drilldown":
+                    self._run_drilldown(plan, result)
+                else:
+                    result.sql, result.params = self._plan_to_sql(plan)
+                    result.data, result.truncated = run_query(self.con, result.sql, result.params)
                 break  # success
             except (ValueError, duckdb.Error) as e:
                 # ValueError covers bad JSON, SemanticError and UnsafeSQLError.
@@ -175,6 +204,34 @@ class Agent:
             return validate_sql(plan.get("sql", "")), []
         raise ValueError(f"Plan 'type' must be metric, sql or cannot_answer, got {kind!r}.")
 
+    def _run_drilldown(self, plan: dict, result: AgentResult, top: int = 5) -> None:
+        """Decompose the change by each requested dimension and keep the top
+        contributors of each, plus the promised-vs-actual lead-time table."""
+        metric, period = plan.get("metric"), plan.get("period_field", "quarter")
+        base, compare = plan.get("base"), plan.get("compare")
+        filters = plan.get("filters") or []
+        if not (metric and base and compare):
+            raise SemanticError("A drilldown plan needs metric, base and compare.")
+        # Grouping by a dimension that is fixed by an '=' filter (state = 'SP')
+        # would give a single segment, so skip it.
+        fixed = {f.get("field") for f in filters if f.get("op", "=") == "="}
+        dims = [d for d in (plan.get("dimensions") or ["category", "seller_state", "seller"])
+                if d not in fixed]
+
+        frames, sqls = [], []
+        for dim in dims:
+            d = decompose(self.con, self.layer, metric, dim, period, base, compare, filters)
+            result.drilldowns.append(d)
+            frames.append(display_table(d, top).assign(dimension=dim))
+            sqls.append(f"-- contributions by {dim}\n{d.sql}")
+        if not frames:
+            raise SemanticError("No dimension left to drill into; choose other dimensions.")
+        first = result.drilldowns[0]
+        result.data = pd.concat(frames, ignore_index=True)
+        result.data = result.data[["dimension"] + [c for c in result.data.columns if c != "dimension"]]
+        result.sql, result.params = "\n\n".join(sqls), first.params
+        result.lead_times = lead_time_drivers(self.con, self.layer, period, base, compare, filters)
+
     def _explain(self, result: AgentResult) -> str:
         table = result.data.head(50).to_csv(index=False)
         note = " (truncated: only the first rows were returned)" if result.truncated else ""
@@ -182,6 +239,18 @@ class Agent:
                    f"Interpretation: {result.plan.get('interpretation', '')}\n"
                    f"SQL:\n{result.sql}\nParameters: {result.params}\n"
                    f"Result ({len(result.data)} rows{note}):\n{table}")
+        if result.drilldowns:
+            d = result.drilldowns[0]
+            if d.metric == "avg_delay_days":
+                overall = f"{d.base_value:.2f} -> {d.compare_value:.2f} days ({d.change:+.2f} days)"
+            else:
+                overall = (f"{100 * d.base_value:.2f}% -> {100 * d.compare_value:.2f}% "
+                           f"({100 * d.change:+.2f} percentage points)")
+            content += (f"\nDrill-down of {d.metric} from {d.base} to {d.compare}. "
+                        f"Overall: {overall}, on {d.base_volume:,.0f} -> {d.compare_volume:,.0f} "
+                        f"orders. The table shows the top contributors per dimension.\n")
+        if result.lead_times is not None:
+            content += f"\nLead times (days):\n{result.lead_times.to_csv(index=False)}"
         return self.llm.chat([
             {"role": "system", "content": EXPLAIN_PROMPT},
             {"role": "user", "content": content},
@@ -202,7 +271,9 @@ def print_result(r: AgentResult) -> None:
     if r.sql:
         print(f"SQL:\n{r.sql}\nParams: {r.params}")
     if r.data is not None:
-        print(r.data.head(10).to_string(index=False))
+        print(r.data.head(20).to_string(index=False))
+    if r.lead_times is not None:
+        print(r.lead_times.to_string(index=False))
     print(f"\nA: {r.answer}")
 
 

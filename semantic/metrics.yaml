@@ -14,6 +14,9 @@
 #     if it has many items) or `order_line` (each item counts).
 #   - `dimensions` lists what the metric may be grouped or filtered by.
 #   - Rates are returned as fractions between 0 and 1 (0.93 = 93%).
+#   - Optional `numerator` / `denominator`: metric = numerator / denominator.
+#     Metrics that have them can be decomposed by the root-cause drill-down
+#     (module 5), which needs to add segments' counts up.
 
 dimensions:
   state:
@@ -68,6 +71,8 @@ metrics:
       count(DISTINCT order_id) FILTER (WHERE is_delivered AND NOT is_late)
       / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0)
     format: percent
+    numerator: count(DISTINCT order_id) FILTER (WHERE is_delivered AND NOT is_late)
+    denominator: count(DISTINCT order_id) FILTER (WHERE is_delivered)
     dimensions: [state, city, seller, seller_state, category, month, quarter, date]
 
   late_delivery_rate:
@@ -78,6 +83,8 @@ metrics:
       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late)
       / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0)
     format: percent
+    numerator: count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late)
+    denominator: count(DISTINCT order_id) FILTER (WHERE is_delivered)
     dimensions: [state, city, seller, seller_state, category, month, quarter, date]
 
   avg_delay_days:
@@ -89,6 +96,8 @@ metrics:
     grain: order
     expression: avg(delivery_delay_days)
     format: days
+    numerator: sum(delivery_delay_days)
+    denominator: count(delivery_delay_days)
     dimensions: [state, city, month, quarter, date]
 
   avg_days_late:
@@ -107,6 +116,17 @@ metrics:
     format: days
     dimensions: [state, city, month, quarter, date]
 
+  avg_promised_days:
+    description: >
+      Average days between purchase and the estimated delivery date promised to
+      the customer, over delivered orders. If promises get shorter, the late rate
+      can rise even while actual delivery gets faster.
+    source: order_delivery
+    grain: order
+    expression: avg(promised_days) FILTER (WHERE is_delivered)
+    format: days
+    dimensions: [state, city, month, quarter, date]
+
   seller_late_shipping_rate:
     description: >
       Share of order lines that the seller handed to the carrier AFTER the
@@ -116,6 +136,8 @@ metrics:
     grain: order_line
     expression: avg(CAST(seller_shipped_late AS INTEGER))
     format: percent
+    numerator: count(*) FILTER (WHERE seller_shipped_late)
+    denominator: count(seller_shipped_late)
     dimensions: [state, city, seller, seller_state, category, month, quarter, date]
 
   revenue:
