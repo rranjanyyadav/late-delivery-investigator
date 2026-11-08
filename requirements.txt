@@ -1,0 +1,9 @@
+duckdb
+pyyaml
+pandas
+openai
+python-dotenv
+sentence-transformers
+chromadb
+streamlit
+pytest
