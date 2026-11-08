@@ -1,9 +1,10 @@
-duckdb
-pyyaml
-pandas
-openai
-python-dotenv
-sentence-transformers
-chromadb
-streamlit
-pytest
+# Pinned to the versions the project was built and tested with (Python 3.11).
+duckdb==2.0.0
+PyYAML==6.0.3
+pandas==3.1.1
+openai==3.46.0          # one client for Groq, Gemini and Ollama (OpenAI-compatible APIs)
+python-dotenv==1.2.4
+sentence-transformers==6.2.0
+chromadb==1.5.9
+streamlit==1.67.0       # brings altair for the charts
+pytest==9.2.0
