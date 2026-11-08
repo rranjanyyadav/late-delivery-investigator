@@ -1,5 +1,7 @@
 # Late-Delivery Investigator
 
+[![CI](https://github.com/rranjanyyadav/late-delivery-investigator/actions/workflows/ci.yml/badge.svg)](https://github.com/rranjanyyadav/late-delivery-investigator/actions/workflows/ci.yml)
+
 An AI analytics assistant for an e-commerce **operations manager investigating
 late deliveries**. It answers questions such as *"Why did on-time delivery drop
 in São Paulo in Q3 2018?"* by querying a governed semantic layer, ranking the
@@ -127,7 +129,10 @@ its exact mirror.
 python -m pytest
 ```
 
-131 tests, about 10 seconds, no network or API key: they build a hand-made
+133 tests, about 10 seconds, no network or API key (an autouse fixture blocks
+all network connections, so a test that tries to reach an API fails). GitHub
+Actions runs them on every push and on pull requests to `main`, after a ruff
+lint step that fails only on real errors (see `ruff.toml`). The tests build a hand-made
 4-order dataset with the real loader and views, where every answer is known
 (e.g. Q3 on-time rate must be 0.5 by order, not 2/3 by line). Covered: SQL
 guard (13 unsafe statements blocked, read-only connection, file access
@@ -161,7 +166,7 @@ caught by 6 failing tests.
 ## Roadmap
 
 - FastAPI endpoint for the agent, with a connection per request
-- Dockerfile and GitHub Actions CI running `pytest` on every push
+- Dockerfile
 - Bigger eval set (50+ questions, some written by someone else), several runs
   per configuration reported as mean and spread, plus a held-out test split
 - Same eval on a local model through Ollama, for a cost/privacy/accuracy comparison

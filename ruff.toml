@@ -1,0 +1,8 @@
+# Ruff lint settings, shared by CI and local runs (`ruff check .`).
+# Only real errors fail the build; style is not enforced:
+#   E9  - syntax errors and files that cannot be read
+#   F63 - invalid comparisons, e.g. `x is "text"`
+#   F7  - statements in the wrong place, e.g. `return` outside a function
+#   F82 - undefined names (a typo that would crash at run time)
+[lint]
+select = ["E9", "F63", "F7", "F82"]

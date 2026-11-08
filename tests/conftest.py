@@ -11,6 +11,7 @@ o1 has TWO items from two sellers, so line-level and order-level answers differ:
 for 2018-Q3 the correct on-time rate is 1/2 = 0.5 (orders), while averaging over
 lines would give 2/3. Several tests rely on that difference.
 """
+import socket
 import sys
 from pathlib import Path
 
@@ -19,6 +20,18 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ldi import loader  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Every test runs with networking switched off. If any code path tries to
+    reach an LLM API, Hugging Face or anything else, the test fails with a
+    clear message instead of quietly depending on the internet (or on an API
+    key that CI does not have)."""
+    def refuse(*args, **kwargs):
+        raise RuntimeError("Network access attempted in a test; tests must be offline.")
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
 
 CSV_FILES = {
     "olist_customers_dataset.csv": """\
