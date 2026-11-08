@@ -1,0 +1,470 @@
+{
+  "label": "after_grain_fix",
+  "timestamp": "2026-11-08T14:18:28",
+  "model": "groq/openai/gpt-oss-120b",
+  "total": 20,
+  "correct": 19,
+  "accuracy": 0.95,
+  "errors": {
+    "wrong metric": 0,
+    "wrong join/filter": 0,
+    "misread question": 1,
+    "hallucinated column": 0,
+    "execution error": 0
+  },
+  "recovered_by_retry": 0,
+  "questions": [
+    {
+      "id": "q01_on_time_overall",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "on_time_delivery_rate"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "What is the overall on-time delivery rate?",
+      "sql": "SELECT count(DISTINCT order_id) FILTER (WHERE is_delivered AND NOT is_late) / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0) AS on_time_delivery_rate\nFROM orders_enriched\nLIMIT 100",
+      "params": [],
+      "errors": [],
+      "rows": 1,
+      "seconds": 1.3,
+      "tags": [
+        "metric",
+        "simple"
+      ]
+    },
+    {
+      "id": "q02_late_count_2017",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "late_order_count"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "How many delivered orders arrived late in 2017?",
+      "sql": "SELECT count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) AS late_order_count\nFROM orders_enriched\nWHERE purchase_quarter IN (?, ?, ?, ?)\nLIMIT 100",
+      "params": [
+        "2017-Q1",
+        "2017-Q2",
+        "2017-Q3",
+        "2017-Q4"
+      ],
+      "errors": [],
+      "rows": 1,
+      "seconds": 1.7,
+      "tags": [
+        "metric",
+        "time-filter"
+      ]
+    },
+    {
+      "id": "q03_late_rate_rj_q1",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "late_delivery_rate"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Late delivery rate in RJ for 2018-Q1",
+      "sql": "SELECT customer_state AS state,\n       purchase_quarter AS quarter,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0) AS late_delivery_rate\nFROM orders_enriched\nWHERE customer_state = ?\n  AND purchase_quarter = ?\nGROUP BY customer_state, purchase_quarter\nORDER BY purchase_quarter\nLIMIT 100",
+      "params": [
+        "RJ",
+        "2018-Q1"
+      ],
+      "errors": [],
+      "rows": 1,
+      "seconds": 1.0,
+      "tags": [
+        "metric",
+        "state-filter"
+      ]
+    },
+    {
+      "id": "q04_top3_states_late_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "late_order_count"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Which 3 states had the most late orders in 2018?",
+      "sql": "SELECT customer_state AS state,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) AS late_order_count\nFROM orders_enriched\nWHERE purchase_month BETWEEN ? AND ?\nGROUP BY customer_state\nORDER BY late_order_count DESC NULLS LAST\nLIMIT 3",
+      "params": [
+        "2018-01-01",
+        "2018-12-01"
+      ],
+      "errors": [],
+      "rows": 3,
+      "seconds": 8.9,
+      "tags": [
+        "metric",
+        "ranking"
+      ]
+    },
+    {
+      "id": "q05_monthly_on_time_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "on_time_delivery_rate"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Show the on-time delivery rate by month from January to August 2018",
+      "sql": "SELECT purchase_month AS month,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND NOT is_late) / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0) AS on_time_delivery_rate\nFROM orders_enriched\nWHERE purchase_month BETWEEN ? AND ?\nGROUP BY purchase_month\nORDER BY purchase_month\nLIMIT 100",
+      "params": [
+        "2018-01-01",
+        "2018-08-01"
+      ],
+      "errors": [],
+      "rows": 8,
+      "seconds": 15.2,
+      "tags": [
+        "metric",
+        "time-series"
+      ]
+    },
+    {
+      "id": "q06_sp_delay_by_quarter_2017",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "avg_delay_days"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Average delivery delay in days for S\u00e3o Paulo state per quarter in 2017",
+      "sql": "SELECT purchase_quarter AS quarter,\n       avg(delivery_delay_days) AS avg_delay_days\nFROM order_delivery\nWHERE customer_state = ?\n  AND purchase_quarter IN (?, ?, ?, ?)\nGROUP BY purchase_quarter\nORDER BY purchase_quarter\nLIMIT 100",
+      "params": [
+        "SP",
+        "2017-Q1",
+        "2017-Q2",
+        "2017-Q3",
+        "2017-Q4"
+      ],
+      "errors": [],
+      "rows": 4,
+      "seconds": 19.5,
+      "tags": [
+        "metric",
+        "time-series",
+        "state-name"
+      ]
+    },
+    {
+      "id": "q07_top5_category_revenue_2017",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "revenue"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Which 5 product categories had the highest revenue in 2017?",
+      "sql": "SELECT category AS category,\n       sum(line_revenue) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable')) AS revenue\nFROM orders_enriched\nWHERE purchase_quarter IN (?, ?, ?, ?)\nGROUP BY category\nORDER BY revenue DESC NULLS LAST\nLIMIT 5",
+      "params": [
+        "2017-Q1",
+        "2017-Q2",
+        "2017-Q3",
+        "2017-Q4"
+      ],
+      "errors": [],
+      "rows": 5,
+      "seconds": 14.1,
+      "tags": [
+        "metric",
+        "ranking"
+      ]
+    },
+    {
+      "id": "q08_days_to_deliver_rj_q2",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "avg_days_to_deliver"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Average delivery time (days) for customers in RJ during 2018-Q2",
+      "sql": "SELECT avg(days_to_deliver) AS avg_days_to_deliver\nFROM order_delivery\nWHERE customer_state = ?\n  AND purchase_quarter = ?\nLIMIT 100",
+      "params": [
+        "RJ",
+        "2018-Q2"
+      ],
+      "errors": [],
+      "rows": 1,
+      "seconds": 3.0,
+      "tags": [
+        "metric",
+        "state-filter"
+      ]
+    },
+    {
+      "id": "q09_seller_late_shipping_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "seller_late_shipping_rate"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "What share of order lines did sellers hand to the carrier after their shipping deadline in 2018?",
+      "sql": "SELECT avg(CAST(seller_shipped_late AS INTEGER)) AS seller_late_shipping_rate\nFROM orders_enriched\nWHERE purchase_quarter IN (?, ?, ?, ?)\nLIMIT 100",
+      "params": [
+        "2018-Q1",
+        "2018-Q2",
+        "2018-Q3",
+        "2018-Q4"
+      ],
+      "errors": [],
+      "rows": 1,
+      "seconds": 13.8,
+      "tags": [
+        "metric",
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "q10_top5_category_late_rate_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "late_delivery_rate"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Which 5 product categories had the highest late delivery rate in 2018, among categories with at least 500 orders?",
+      "sql": "SELECT category AS category,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0) AS late_delivery_rate\nFROM orders_enriched\nWHERE purchase_quarter IN (?, ?, ?, ?)\nGROUP BY category\nHAVING count(DISTINCT order_id) >= 500\nORDER BY late_delivery_rate DESC NULLS LAST\nLIMIT 5",
+      "params": [
+        "2018-Q1",
+        "2018-Q2",
+        "2018-Q3",
+        "2018-Q4"
+      ],
+      "errors": [],
+      "rows": 5,
+      "seconds": 14.7,
+      "tags": [
+        "metric",
+        "ranking",
+        "min-volume"
+      ]
+    },
+    {
+      "id": "q11_review_late_vs_on_time",
+      "correct": true,
+      "category": null,
+      "plan_type": "sql",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Calculate the average review score for orders that were delivered late versus those delivered on time",
+      "sql": "SELECT od.is_late AS late_flag,\n       AVG(r.review_score) AS avg_review_score\nFROM order_delivery od\nJOIN reviews r ON od.order_id = r.order_id\nWHERE od.is_delivered = TRUE\nGROUP BY od.is_late",
+      "params": [],
+      "errors": [],
+      "rows": 2,
+      "seconds": 14.4,
+      "tags": [
+        "raw-sql",
+        "join",
+        "grain"
+      ]
+    },
+    {
+      "id": "q12_cancel_share_2017",
+      "correct": true,
+      "category": null,
+      "plan_type": "sql",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "What percentage of orders purchased in 2017 were canceled?",
+      "sql": "SELECT (SUM(CASE WHEN order_status = 'canceled' THEN 1 ELSE 0 END)::DOUBLE / COUNT(*)) * 100 AS canceled_percentage FROM order_delivery WHERE purchase_date BETWEEN '2017-01-01' AND '2017-12-31'",
+      "params": [],
+      "errors": [],
+      "rows": 1,
+      "seconds": 21.1,
+      "tags": [
+        "raw-sql"
+      ]
+    },
+    {
+      "id": "q13_multi_seller_orders",
+      "correct": true,
+      "category": null,
+      "plan_type": "sql",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Count of delivered orders that included items from more than one seller",
+      "sql": "SELECT COUNT(*) AS delivered_multi_seller_orders FROM order_delivery WHERE is_delivered = TRUE AND seller_count > 1",
+      "params": [],
+      "errors": [],
+      "rows": 1,
+      "seconds": 13.4,
+      "tags": [
+        "raw-sql",
+        "grain"
+      ]
+    },
+    {
+      "id": "q14_freight_per_order_sp_rj",
+      "correct": false,
+      "category": "misread question",
+      "plan_type": "sql",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Average freight value per order for customers in states SP and RJ",
+      "sql": "SELECT AVG(order_freight) AS avg_freight_per_order\nFROM (\n  SELECT order_id, SUM(freight_value) AS order_freight\n  FROM orders_enriched\n  WHERE customer_state IN ('SP','RJ')\n  GROUP BY order_id\n) sub",
+      "params": [],
+      "errors": [],
+      "rows": 1,
+      "seconds": 1.2,
+      "tags": [
+        "raw-sql",
+        "grain"
+      ]
+    },
+    {
+      "id": "q15_promised_days_q2_q3",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "avg_promised_days"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Average number of days customers were promised for delivery in the quarters 2018-Q2 and 2018-Q3",
+      "sql": "SELECT purchase_quarter AS quarter,\n       avg(promised_days) FILTER (WHERE is_delivered) AS avg_promised_days\nFROM order_delivery\nWHERE purchase_quarter IN (?, ?)\nGROUP BY purchase_quarter\nORDER BY purchase_quarter\nLIMIT 100",
+      "params": [
+        "2018-Q2",
+        "2018-Q3"
+      ],
+      "errors": [],
+      "rows": 2,
+      "seconds": 20.5,
+      "tags": [
+        "metric",
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "q16_carrier",
+      "correct": true,
+      "category": null,
+      "plan_type": "cannot_answer",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Which carrier delivered the most late orders?",
+      "sql": "",
+      "params": [],
+      "errors": [],
+      "rows": null,
+      "seconds": 1.8,
+      "tags": [
+        "refusal"
+      ]
+    },
+    {
+      "id": "q17_december_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "cannot_answer",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "What was the on-time delivery rate in December 2018?",
+      "sql": "",
+      "params": [],
+      "errors": [],
+      "rows": null,
+      "seconds": 11.0,
+      "tags": [
+        "refusal",
+        "coverage"
+      ]
+    },
+    {
+      "id": "q18_profit_margin",
+      "correct": true,
+      "category": null,
+      "plan_type": "cannot_answer",
+      "metrics": null,
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "What was the profit margin by product category?",
+      "sql": "",
+      "params": [],
+      "errors": [],
+      "rows": null,
+      "seconds": 22.0,
+      "tags": [
+        "refusal"
+      ]
+    },
+    {
+      "id": "q19_why_sp_q3",
+      "correct": true,
+      "category": null,
+      "plan_type": "drilldown",
+      "metrics": "late_delivery_rate",
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Why did on-time delivery drop in S\u00e3o Paulo in Q3 2018?",
+      "sql": "-- contributions by category\nSELECT CAST(purchase_quarter AS VARCHAR) AS period,\n       COALESCE(CAST(category AS VARCHAR), 'unknown') AS segment,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) AS num,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered) AS den\nFROM orders_enriched\nWHERE CAST(purchase_quarter AS VARCHAR) IN (?, ?)\n  AND customer_state = ?\nGROUP BY ALL\n\n-- contributions by seller_state\nSELECT CAST(purchase_quarter AS VARCHAR) AS period,\n       COALESCE(CAST(seller_state AS VARCHAR), 'unknown') AS segment,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) AS num,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered) AS den\nFROM orders_enriched\nWHERE CAST(purchase_quarter AS VARCHAR) IN (?, ?)\n  AND customer_state = ?\nGROUP BY ALL\n\n-- contributions by seller\nSELECT CAST(purchase_quarter AS VARCHAR) AS period,\n       COALESCE(CAST(seller_id AS VARCHAR), 'unknown') AS segment,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late) AS num,\n       count(DISTINCT order_id) FILTER (WHERE is_delivered) AS den\nFROM orders_enriched\nWHERE CAST(purchase_quarter AS VARCHAR) IN (?, ?)\n  AND customer_state = ?\nGROUP BY ALL",
+      "params": [
+        "2018-Q2",
+        "2018-Q3",
+        "SP"
+      ],
+      "errors": [],
+      "rows": 15,
+      "seconds": 2.4,
+      "tags": [
+        "drilldown"
+      ]
+    },
+    {
+      "id": "q20_sp_city_delivered_2018",
+      "correct": true,
+      "category": null,
+      "plan_type": "metric",
+      "metrics": [
+        "delivered_orders"
+      ],
+      "attempts": 1,
+      "recovered_by_retry": false,
+      "interpretation": "Count of delivered orders to customers in the city \"sao paulo\" during 2018",
+      "sql": "SELECT count(DISTINCT order_id) FILTER (WHERE is_delivered) AS delivered_orders\nFROM orders_enriched\nWHERE customer_city = ?\n  AND purchase_month BETWEEN ? AND ?\nLIMIT 100",
+      "params": [
+        "sao paulo",
+        "2018-01-01",
+        "2018-12-01"
+      ],
+      "errors": [],
+      "rows": 1,
+      "seconds": 14.8,
+      "tags": [
+        "metric",
+        "city-vs-state"
+      ]
+    }
+  ]
+}

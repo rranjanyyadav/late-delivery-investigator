@@ -25,7 +25,17 @@ from ldi.semantic import SemanticError, SemanticLayer
 from ldi.sql_guard import UnsafeSQLError, connect_readonly, run_query, validate_sql
 
 MAX_ATTEMPTS = 2  # first try + one retry with the error fed back
-SCHEMA_TABLES = ["order_delivery", "orders_enriched", "reviews"]
+# Each table is shown to the LLM WITH its grain. Eval fix (module 8): without
+# these notes the baseline averaged review scores and counted canceled orders
+# over orders_enriched, which counts multi-item orders several times.
+SCHEMA_TABLES = {
+    "order_delivery": "ONE ROW PER ORDER, all orders including canceled ones and orders "
+                      "without items. Use it for every order-level question.",
+    "orders_enriched": "ONE ROW PER ORDER LINE (item). Order-level columns repeat on every "
+                       "line of an order. Use it only when you need seller, category, "
+                       "product or per-line price columns.",
+    "reviews": "One row per review. Join to order_delivery on order_id.",
+}
 CANNOT_ANSWER = "I can't answer that from this data"
 
 PLAN_PROMPT = """You are the query planner of "Late-Delivery Investigator", an analytics
@@ -78,7 +88,10 @@ RULES
   question needs most.
 - When ranking sellers or categories by a rate, set min_orders (e.g. 30) so tiny
   groups do not dominate.
-- In raw SQL on orders_enriched, count orders with count(DISTINCT order_id), never count(*).
+- In raw SQL, answer order-level questions (per-order averages, order counts, order status,
+  reviews) from order_delivery. Averaging, summing or counting over orders_enriched counts
+  multi-item orders several times. If you must use orders_enriched, count orders with
+  count(DISTINCT order_id).
 """
 
 EXPLAIN_PROMPT = """You explain query results to an operations manager in plain English.
@@ -135,9 +148,9 @@ class Agent:
             return ", ".join(str(r[0]) for r in self.con.execute(sql).fetchall())
 
         schema = []
-        for table in SCHEMA_TABLES:
+        for table, grain in SCHEMA_TABLES.items():
             cols = self.con.execute(f"DESCRIBE {table}").fetchall()
-            schema.append(f"{table}(" + ", ".join(f"{c[0]} {c[1]}" for c in cols) + ")")
+            schema.append(f"{table} -- {grain}\n  (" + ", ".join(f"{c[0]} {c[1]}" for c in cols) + ")")
 
         return PLAN_PROMPT.format(
             semantic=self.layer.describe(),
@@ -149,7 +162,8 @@ class Agent:
         )
 
     # ---------------------------------------------------------------- ask
-    def ask(self, question: str) -> AgentResult:
+    def ask(self, question: str, explain: bool = True) -> AgentResult:
+        """explain=False skips the final LLM call (the eval grades the data, not the prose)."""
         result = AgentResult(question=question)
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -186,7 +200,7 @@ class Agent:
             return result
 
         result.status = "ok"
-        result.answer = self._explain(result)
+        result.answer = self._explain(result) if explain else ""
         return result
 
     def _plan_to_sql(self, plan: dict) -> tuple[str, list]:

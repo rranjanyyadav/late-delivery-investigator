@@ -1,0 +1,168 @@
+# Evaluation set for the text-to-SQL agent (module 8).
+#
+# Each question has ONE way to be graded:
+#   gold_sql:   run against the database; the agent's result must contain every
+#               gold column's values (see grade.py rules in run_eval.py).
+#               Gold SQL selects only the columns that define a correct answer.
+#   expect: cannot_answer   the agent must refuse (data does not contain it)
+#   expect: no_data         refusing OR returning no rows / only NULLs is correct
+#   drilldown:  the agent must run a drill-down and find this top contributor
+# Optional:
+#   metric:     the semantic-layer metric a correct plan uses (for the
+#               "wrong metric" error category)
+#   tags:       what the question tests
+#
+# Gold SQL is written against the ORDER-LEVEL view (order_delivery) wherever the
+# question is about orders, so line-level double counting shows up as an error.
+
+questions:
+  - id: q01_on_time_overall
+    question: What is the overall on-time delivery rate?
+    metric: on_time_delivery_rate
+    tags: [metric, simple]
+    gold_sql: |
+      SELECT avg(CASE WHEN is_late THEN 0 ELSE 1 END) FROM order_delivery WHERE is_delivered
+
+  - id: q02_late_count_2017
+    question: How many delivered orders arrived late in 2017?
+    metric: late_order_count
+    tags: [metric, time-filter]
+    gold_sql: |
+      SELECT count(*) FROM order_delivery
+      WHERE is_delivered AND is_late AND year(purchase_date) = 2017
+
+  - id: q03_late_rate_rj_q1
+    question: What was the late delivery rate in RJ in 2018-Q1?
+    metric: late_delivery_rate
+    tags: [metric, state-filter]
+    gold_sql: |
+      SELECT avg(is_late::INT) FROM order_delivery
+      WHERE is_delivered AND customer_state = 'RJ' AND purchase_quarter = '2018-Q1'
+
+  - id: q04_top3_states_late_2018
+    question: Which 3 states had the most late orders in 2018?
+    metric: late_order_count
+    tags: [metric, ranking]
+    gold_sql: |
+      SELECT customer_state, count(*) AS late_orders FROM order_delivery
+      WHERE is_delivered AND is_late AND year(purchase_date) = 2018
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+
+  - id: q05_monthly_on_time_2018
+    question: Show the on-time delivery rate by month from January to August 2018.
+    metric: on_time_delivery_rate
+    tags: [metric, time-series]
+    gold_sql: |
+      SELECT purchase_month, avg(CASE WHEN is_late THEN 0 ELSE 1 END) FROM order_delivery
+      WHERE is_delivered AND purchase_month BETWEEN DATE '2018-01-01' AND DATE '2018-08-01'
+      GROUP BY 1 ORDER BY 1
+
+  - id: q06_sp_delay_by_quarter_2017
+    question: What was the average delivery delay in days for São Paulo state in each quarter of 2017?
+    metric: avg_delay_days
+    tags: [metric, time-series, state-name]
+    gold_sql: |
+      SELECT purchase_quarter, avg(delivery_delay_days) FROM order_delivery
+      WHERE customer_state = 'SP' AND year(purchase_date) = 2017
+      GROUP BY 1 ORDER BY 1
+
+  - id: q07_top5_category_revenue_2017
+    question: Which 5 product categories had the highest revenue in 2017?
+    metric: revenue
+    tags: [metric, ranking]
+    gold_sql: |
+      SELECT category, sum(line_revenue) FROM orders_enriched
+      WHERE order_status NOT IN ('canceled', 'unavailable') AND year(purchase_date) = 2017
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 5
+
+  - id: q08_days_to_deliver_rj_q2
+    question: On average, how many days did delivery take for customers in RJ in 2018-Q2?
+    metric: avg_days_to_deliver
+    tags: [metric, state-filter]
+    gold_sql: |
+      SELECT avg(days_to_deliver) FROM order_delivery
+      WHERE customer_state = 'RJ' AND purchase_quarter = '2018-Q2'
+
+  - id: q09_seller_late_shipping_2018
+    question: What share of order lines did sellers hand to the carrier after their shipping deadline in 2018?
+    metric: seller_late_shipping_rate
+    tags: [metric, paraphrase]
+    gold_sql: |
+      SELECT avg(seller_shipped_late::INT) FROM orders_enriched WHERE year(purchase_date) = 2018
+
+  - id: q10_top5_category_late_rate_2018
+    question: Which 5 product categories had the highest late delivery rate in 2018, among categories with at least 500 orders?
+    metric: late_delivery_rate
+    tags: [metric, ranking, min-volume]
+    gold_sql: |
+      SELECT category,
+             count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late)
+             / count(DISTINCT order_id) FILTER (WHERE is_delivered)
+      FROM orders_enriched WHERE year(purchase_date) = 2018
+      GROUP BY 1 HAVING count(DISTINCT order_id) >= 500
+      ORDER BY 2 DESC LIMIT 5
+
+  - id: q11_review_late_vs_on_time
+    question: What is the average review score for late versus on-time delivered orders?
+    tags: [raw-sql, join, grain]
+    gold_sql: |
+      SELECT avg(r.review_score) FROM reviews r JOIN order_delivery d USING (order_id)
+      WHERE d.is_delivered GROUP BY d.is_late
+
+  - id: q12_cancel_share_2017
+    question: What percentage of orders purchased in 2017 were canceled?
+    tags: [raw-sql]
+    gold_sql: |
+      SELECT avg((order_status = 'canceled')::INT) FROM order_delivery
+      WHERE year(purchase_date) = 2017
+
+  - id: q13_multi_seller_orders
+    question: How many delivered orders contained items from more than one seller?
+    tags: [raw-sql, grain]
+    gold_sql: |
+      SELECT count(*) FROM order_delivery WHERE is_delivered AND seller_count > 1
+
+  - id: q14_freight_per_order_sp_rj
+    question: What was the average freight value per order for customers in SP and in RJ?
+    tags: [raw-sql, grain]
+    gold_sql: |
+      SELECT customer_state, avg(freight_value) FROM order_delivery
+      WHERE customer_state IN ('SP', 'RJ') GROUP BY 1
+
+  - id: q15_promised_days_q2_q3
+    question: How many days of delivery time were customers promised on average in 2018-Q2 and in 2018-Q3?
+    metric: avg_promised_days
+    tags: [metric, paraphrase]
+    gold_sql: |
+      SELECT purchase_quarter, avg(promised_days) FROM order_delivery
+      WHERE is_delivered AND purchase_quarter IN ('2018-Q2', '2018-Q3') GROUP BY 1
+
+  - id: q16_carrier
+    question: Which carrier delivered the most late orders?
+    expect: cannot_answer
+    tags: [refusal]
+
+  - id: q17_december_2018
+    question: What was the on-time delivery rate in December 2018?
+    expect: no_data
+    tags: [refusal, coverage]
+
+  - id: q18_profit_margin
+    question: What was the profit margin by product category?
+    expect: cannot_answer
+    tags: [refusal]
+
+  - id: q19_why_sp_q3
+    question: Why did on-time delivery drop in São Paulo in Q3 2018?
+    tags: [drilldown]
+    drilldown:
+      dimension: category
+      top_segment: health_beauty
+
+  - id: q20_sp_city_delivered_2018
+    question: How many delivered orders went to customers in the city of São Paulo in 2018?
+    metric: delivered_orders
+    tags: [metric, city-vs-state]
+    gold_sql: |
+      SELECT count(*) FROM order_delivery
+      WHERE is_delivered AND customer_city = 'sao paulo' AND year(purchase_date) = 2018
