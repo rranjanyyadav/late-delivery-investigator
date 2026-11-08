@@ -1,4 +1,5 @@
-"""Module 1: load the Olist CSVs into DuckDB and run data-quality checks.
+"""Module 1: load the Olist CSVs into DuckDB, create the views from sql/
+(module 2) and run data-quality checks.
 
 Usage:
     python -m ldi.loader            # build data/olist.duckdb and print a summary
@@ -13,6 +14,7 @@ from pathlib import Path
 import duckdb
 
 from ldi.config import DB_PATH, RAW_DIR
+from ldi.views import apply_views
 
 # CSV file name -> table name in DuckDB.
 TABLES = {
@@ -149,6 +151,21 @@ CHECKS = [
     Check("orders with no order_items",
           "SELECT count(*) FROM orders o "
           "WHERE NOT EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.order_id)"),
+
+    # 5. Grain of the views (module 2). A wrong join silently duplicates or
+    #    drops rows and inflates every metric, so these are critical.
+    Check("order_delivery rows != orders rows",
+          "SELECT abs((SELECT count(*) FROM order_delivery) - (SELECT count(*) FROM orders))",
+          critical=True),
+    Check("duplicate order_delivery.order_id", _dup("order_delivery", "order_id"),
+          critical=True),
+    Check("orders_enriched rows != order_items rows",
+          "SELECT abs((SELECT count(*) FROM orders_enriched) - (SELECT count(*) FROM order_items))",
+          critical=True),
+    Check("is_late disagrees with delivery_delay_days",
+          "SELECT count(*) FROM order_delivery "
+          "WHERE is_late IS DISTINCT FROM (delivery_delay_days > 0)",
+          critical=True),
 ]
 
 
@@ -189,6 +206,7 @@ def build(db_path: Path = DB_PATH, raw_dir: Path = RAW_DIR) -> list[CheckResult]
     con = duckdb.connect(str(db_path))
     try:
         counts = load_csvs(con, raw_dir)
+        apply_views(con)  # module 2: the views in sql/
         results = run_quality_checks(con)
     finally:
         con.close()
