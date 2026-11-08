@@ -1,0 +1,127 @@
+# Semantic layer: the single, agreed definition of every business metric.
+#
+# The SQL agent (module 4) is told to answer with these metrics instead of
+# writing its own aggregate SQL, so "on-time rate" means the same thing in
+# every answer, chart and eval.
+#
+# Rules for every metric:
+#   - `expression` is a self-contained SQL aggregate. Any filter the metric
+#     needs (e.g. "only delivered orders") lives INSIDE the expression as a
+#     FILTER (WHERE ...) clause, so several metrics can be combined in one query.
+#   - `source` is the view the expression runs on. Metrics from different
+#     sources cannot be combined in one query.
+#   - `grain` says what is being counted: `order` (one order counts once, even
+#     if it has many items) or `order_line` (each item counts).
+#   - `dimensions` lists what the metric may be grouped or filtered by.
+#   - Rates are returned as fractions between 0 and 1 (0.93 = 93%).
+
+dimensions:
+  state:
+    column: customer_state
+    description: Customer's state, 2-letter code (SP = São Paulo state, RJ = Rio de Janeiro).
+  city:
+    column: customer_city
+    description: Customer's city, lower case without accents (e.g. 'sao paulo').
+  seller:
+    column: seller_id
+    description: Seller ID (32-character hash).
+  seller_state:
+    column: seller_state
+    description: State the seller ships from, 2-letter code.
+  category:
+    column: category
+    description: Product category in English (e.g. 'bed_bath_table', 'health_beauty').
+  month:
+    column: purchase_month
+    description: First day of the purchase month as a DATE (e.g. 2018-07-01).
+  quarter:
+    column: purchase_quarter
+    description: Purchase quarter as text 'YYYY-QN' (e.g. '2018-Q3').
+  date:
+    column: purchase_date
+    description: Purchase date as a DATE.
+
+metrics:
+  delivered_orders:
+    description: Number of orders that reached the customer.
+    source: orders_enriched
+    grain: order
+    expression: count(DISTINCT order_id) FILTER (WHERE is_delivered)
+    format: count
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
+
+  late_order_count:
+    description: Number of delivered orders that arrived after the estimated delivery date.
+    source: orders_enriched
+    grain: order
+    expression: count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late)
+    format: count
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
+
+  on_time_delivery_rate:
+    description: >
+      Share of delivered orders that arrived on or before the estimated delivery
+      date. The headline delivery KPI.
+    source: orders_enriched
+    grain: order
+    expression: >
+      count(DISTINCT order_id) FILTER (WHERE is_delivered AND NOT is_late)
+      / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0)
+    format: percent
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
+
+  late_delivery_rate:
+    description: Share of delivered orders that arrived after the estimated delivery date (1 - on_time_delivery_rate).
+    source: orders_enriched
+    grain: order
+    expression: >
+      count(DISTINCT order_id) FILTER (WHERE is_delivered AND is_late)
+      / NULLIF(count(DISTINCT order_id) FILTER (WHERE is_delivered), 0)
+    format: percent
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
+
+  avg_delay_days:
+    description: >
+      Average days between the estimated and the actual delivery date, over
+      delivered orders. Negative = early on average. Not available by seller or
+      category because it is computed per order.
+    source: order_delivery
+    grain: order
+    expression: avg(delivery_delay_days)
+    format: days
+    dimensions: [state, city, month, quarter, date]
+
+  avg_days_late:
+    description: Among late orders only, the average number of days they arrived after the estimated date ("how late are the late ones").
+    source: order_delivery
+    grain: order
+    expression: avg(delivery_delay_days) FILTER (WHERE is_late)
+    format: days
+    dimensions: [state, city, month, quarter, date]
+
+  avg_days_to_deliver:
+    description: Average days from purchase to delivery, over delivered orders.
+    source: order_delivery
+    grain: order
+    expression: avg(days_to_deliver)
+    format: days
+    dimensions: [state, city, month, quarter, date]
+
+  seller_late_shipping_rate:
+    description: >
+      Share of order lines that the seller handed to the carrier AFTER the
+      seller's shipping deadline. Measures the seller's part of lateness, as
+      opposed to the carrier's.
+    source: orders_enriched
+    grain: order_line
+    expression: avg(CAST(seller_shipped_late AS INTEGER))
+    format: percent
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
+
+  revenue:
+    description: Item price plus freight, excluding canceled and unavailable orders, in BRL (R$).
+    source: orders_enriched
+    grain: order_line
+    expression: sum(line_revenue) FILTER (WHERE order_status NOT IN ('canceled', 'unavailable'))
+    format: currency
+    dimensions: [state, city, seller, seller_state, category, month, quarter, date]
